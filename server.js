@@ -5,7 +5,12 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3001;
 
-const upload = multer({ dest: 'uploads/', limits: { fileSize: 20 * 1024 * 1024 * 1024 } }); // 20GB
+// 🔁 Use memory buffer instead of saving to disk
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  limits: { fileSize: 20 * 1024 * 1024 * 1024 } // 20GB
+});
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -15,14 +20,28 @@ cloudinary.config({
 
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
-    const result = await cloudinary.uploader.upload_large(req.file.path, {
-      resource_type: 'image',
-      chunk_size: 6000000
-    });
-    res.json({ secure_url: result.secure_url });
+    if (!req.file) return res.status(400).json({ error: "No file received" });
+
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: "image",
+        chunk_size: 6000000
+      },
+      (error, result) => {
+        if (error) {
+          console.error("❌ Cloudinary error:", error);
+          return res.status(500).json({ error: 'Upload failed' });
+        }
+        console.log(`✅ Uploaded: ${result.original_filename}`);
+        res.json({ secure_url: result.secure_url });
+      }
+    );
+
+    stream.end(req.file.buffer);
+
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Upload failed' });
+    console.error("❌ Server error:", err);
+    res.status(500).json({ error: 'Upload failed (server)' });
   }
 });
 
